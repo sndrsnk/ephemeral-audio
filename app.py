@@ -56,6 +56,8 @@ def initialize_audio_system():
     Initialize the audio system on startup.
     Scans audio directory and creates metadata for new files.
     """
+    import json
+    
     print("Initializing Ephemeral Audio Decay System...")
     print(f"Audio directory: {app.config['AUDIO_DIR']}")
     print(f"Metadata directory: {app.config['METADATA_DIR']}")
@@ -68,6 +70,16 @@ def initialize_audio_system():
             print(f"Initialized metadata for {len(initialized)} new track(s):")
             for filename in initialized:
                 print(f"  - {filename}")
+                
+                # Generate waveform for new tracks
+                file_path = os.path.join(app.config['AUDIO_DIR'], filename)
+                cache_path = os.path.join(app.config['METADATA_DIR'], f'{filename}.waveform.json')
+                
+                if not os.path.exists(cache_path):
+                    print(f"    Generating waveform...")
+                    waveform_data = generate_waveform(file_path)
+                    with open(cache_path, 'w') as f:
+                        json.dump(waveform_data, f)
         else:
             print("No new tracks to initialize")
         
@@ -111,12 +123,14 @@ def player():
 @app.route('/tracks')
 def get_tracks():
     """
-    Get list of all available tracks with degradation stats.
+    Get list of all available tracks with degradation stats and chunk info.
     
     Returns:
         JSON array of track metadata
     """
     try:
+        import numpy as np
+        
         tracks = metadata_manager.get_all_tracks()
         
         # Format response
@@ -127,16 +141,185 @@ def get_tracks():
                 track['filename'],
                 app.config['DEGRADATION_RATE']
             )
+            
+            # Calculate total chunks (5 seconds each)
+            total_chunks = int(np.ceil(track['duration'] / 5.0))
+            
             response.append({
                 'filename': track['filename'],
                 'title': track['title'],
                 'duration': track['duration'],
                 'overall_degradation': degradation,
-                'total_streams': track.get('total_streams', 0)
+                'total_streams': track.get('total_streams', 0),
+                'total_chunks': total_chunks
             })
         
         return jsonify(response)
     
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/waveform/<filename>')
+def get_waveform(filename):
+    """
+    Generate waveform data for visualization.
+    Returns JSON array of {min, max} values sampled from the audio.
+    
+    Args:
+        filename: Name of WAV file
+        
+    Returns:
+        JSON array of ~1000 sample points
+    """
+    try:
+        import json
+        
+        file_path = os.path.join(app.config['AUDIO_DIR'], filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'Audio file not found'}), 404
+        
+        # Check if waveform is cached
+        cache_path = os.path.join(app.config['METADATA_DIR'], f'{filename}.waveform.json')
+        
+        if os.path.exists(cache_path):
+            with open(cache_path, 'r') as f:
+                waveform_data = json.load(f)
+            return jsonify(waveform_data)
+        
+        # Generate waveform data
+        waveform_data = generate_waveform(file_path)
+        
+        # Cache it
+        with open(cache_path, 'w') as f:
+            json.dump(waveform_data, f)
+        
+        return jsonify(waveform_data)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def generate_waveform(file_path, num_samples=1000):
+    """
+    Generate waveform data by sampling the audio file.
+    
+    Args:
+        file_path: Path to WAV file
+        num_samples: Number of sample points to generate (default 1000)
+        
+    Returns:
+        List of {min, max} dictionaries
+    """
+    import wav_handler
+    import wave
+    import numpy as np
+    
+    # Get WAV info
+    wav_info = wav_handler.get_wav_info(file_path)
+    
+    # Read entire file
+    with wave.open(file_path, 'rb') as wav_file:
+        frames = wav_file.readframes(wav_info['num_frames'])
+    
+    # Convert to numpy array
+    if wav_info['sample_width'] == 2:
+        dtype = np.int16
+    elif wav_info['sample_width'] == 4:
+        dtype = np.int32
+    else:
+        dtype = np.int16
+    
+    audio_data = np.frombuffer(frames, dtype=dtype)
+    
+    # Mix to mono if stereo
+    if wav_info['channels'] > 1:
+        audio_data = audio_data.reshape(-1, wav_info['channels'])
+        audio_data = audio_data.mean(axis=1)
+    
+    # Normalize to -1.0 to 1.0
+    audio_data = audio_data.astype(np.float32)
+    max_val = np.abs(audio_data).max()
+    if max_val > 0:
+        audio_data = audio_data / max_val
+    
+    # Sample down to num_samples points
+    samples_per_point = len(audio_data) // num_samples
+    waveform = []
+    
+    for i in range(num_samples):
+        start = i * samples_per_point
+        end = start + samples_per_point
+        
+        if end > len(audio_data):
+            end = len(audio_data)
+        
+        chunk = audio_data[start:end]
+        
+        if len(chunk) > 0:
+            waveform.append({
+                'min': float(chunk.min()),
+                'max': float(chunk.max())
+            })
+    
+    return waveform
+
+
+@app.route('/stream/<filename>/chunk/<int:chunk_index>')
+def stream_chunk(filename, chunk_index):
+    """
+    Stream a specific 5-second chunk of audio as a complete WAV file.
+    Each chunk reflects the current degraded state of the WAV.
+    
+    Args:
+        filename: Name of WAV file
+        chunk_index: Which 5-second chunk (0-based)
+        
+    Returns:
+        WAV audio chunk
+    """
+    try:
+        import io
+        import wave
+        import wav_handler
+        import numpy as np
+        
+        file_path = os.path.join(app.config['AUDIO_DIR'], filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'Audio file not found'}), 404
+        
+        # Define chunk size (5 seconds)
+        CHUNK_DURATION = 5.0
+        
+        # Read the chunk using existing wav_handler
+        audio_data, wav_info = wav_handler.read_segment(
+            file_path,
+            chunk_index,
+            CHUNK_DURATION
+        )
+        
+        # Create complete WAV file in memory for this chunk
+        buffer = io.BytesIO()
+        with wave.open(buffer, 'wb') as wav_file:
+            wav_file.setnchannels(wav_info['channels'])
+            wav_file.setsampwidth(wav_info['sample_width'])
+            wav_file.setframerate(wav_info['sample_rate'])
+            wav_file.writeframes(audio_data.tobytes())
+        
+        buffer.seek(0)
+        
+        return Response(
+            buffer.getvalue(),
+            mimetype='audio/wav',
+            headers={
+                'Content-Length': str(len(buffer.getvalue())),
+                'Cache-Control': 'no-cache',  # Critical: no caching!
+                'Accept-Ranges': 'bytes'
+            }
+        )
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

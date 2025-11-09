@@ -1,0 +1,18 @@
+[project]
+name = "ephemeral-audio-decay"
+version = "0.1.0"
+description = "A Flask server that streams WAV files while progressively degrading them through listener interaction"
+requires-python = ">=3.9"
+dependencies = [
+    "flask>=3.0.0",
+    "numpy>=1.26.2",
+    "flask-cors>=4.0.0",
+    "gunicorn>=21.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]

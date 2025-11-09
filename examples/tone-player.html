@@ -219,7 +219,7 @@
                 
                 // Pre-load and draw waveforms for all tracks
                 tracks.forEach(async (track, index) => {
-                    const url = `${API_BASE_URL}/stream/${track.filename}?v=${Date.now()}`;
+                    const url = `${API_BASE_URL}/stream/${track.filename}/mp3?v=${Date.now()}`;
                     const buffer = await Tone.Buffer.fromUrl(url);
                     drawWaveform(index, buffer);
                 });
@@ -255,8 +255,8 @@
         async function createPlayer(index, filename, duration) {
             console.log(`Creating player for ${filename}`);
             
-            // Load audio buffer
-            const url = `${API_BASE_URL}/stream/${filename}?v=${Date.now()}`;
+            // Load audio buffer (MP3 for faster loading)
+            const url = `${API_BASE_URL}/stream/${filename}/mp3?v=${Date.now()}`;
             const buffer = await Tone.Buffer.fromUrl(url);
             
             // Draw waveform
@@ -384,7 +384,7 @@
             
             // Clear waveform cache and redraw
             waveformCache.delete(index);
-            const url = `${API_BASE_URL}/stream/${filename}?v=${Date.now()}`;
+            const url = `${API_BASE_URL}/stream/${filename}/mp3?v=${Date.now()}`;
             const buffer = await Tone.Buffer.fromUrl(url);
             drawWaveform(index, buffer);
             

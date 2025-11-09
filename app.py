@@ -145,6 +145,7 @@ def get_tracks():
 def stream_audio(filename):
     """
     Stream audio file with range request support for seeking.
+    Serves WAV format (original, for backward compatibility).
     
     Args:
         filename: Name of WAV file to stream
@@ -220,6 +221,52 @@ def stream_audio(filename):
     
     except Exception as e:
         return jsonify({'error': f'Streaming error: {str(e)}'}), 500
+
+
+@app.route('/stream/<filename>/mp3')
+def stream_audio_mp3(filename):
+    """
+    Stream audio file transcoded to MP3 for efficient playback.
+    Much smaller file size (~10x compression) for faster loading.
+    
+    Args:
+        filename: Name of WAV file to stream
+        
+    Returns:
+        MP3 audio stream
+    """
+    try:
+        from pydub import AudioSegment
+        import io
+        
+        file_path = os.path.join(app.config['AUDIO_DIR'], filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'Audio file not found'}), 404
+        
+        # Increment total streams
+        metadata_manager.increment_total_streams(filename)
+        
+        # Load WAV and convert to MP3
+        audio = AudioSegment.from_wav(file_path)
+        
+        # Export to MP3 in memory
+        mp3_buffer = io.BytesIO()
+        audio.export(mp3_buffer, format='mp3', bitrate='128k')
+        mp3_buffer.seek(0)
+        
+        # Get size for Content-Length
+        mp3_size = mp3_buffer.getbuffer().nbytes
+        
+        return Response(
+            mp3_buffer.read(),
+            mimetype='audio/mpeg',
+            headers={
+                'Content-Length': str(mp3_size),
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=300'  # Cache for 5 minutes
+            }
+        )
     
     except Exception as e:
         return jsonify({'error': f'Streaming error: {str(e)}'}), 500

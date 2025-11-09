@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["python311", "pip"]
+nixPkgs = ["python311"]
 
 [phases.install]
-cmds = ["python -m pip install --upgrade pip", "python -m pip install ."]
+cmds = ["python3 -m pip install --upgrade pip", "python3 -m pip install ."]
 
 [start]
 cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app"

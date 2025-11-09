@@ -9,9 +9,6 @@ venv/
 ENV/
 env/
 
-# Generated files
-requirements.txt
-
 # Environment
 .env
 
